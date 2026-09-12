@@ -92,9 +92,16 @@ def healthz():
 
 
 # 服务器部署时由后端直接托管前端构建产物（frontend/dist），无需独立 node/nginx。
-# 必须注册在所有 API 路由（含 /healthz）之后，否则会拦截 API 请求。
+# 必须注册在所有 API 路由（含 /healthz）之后；未知路径回退 index.html（SPA history 路由）。
 from pathlib import Path
+
+from fastapi.responses import FileResponse
 
 _dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if _dist.exists():
-    app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        candidate = (_dist / full_path).resolve()
+        if full_path and candidate.is_file() and str(candidate).startswith(str(_dist.resolve())):
+            return FileResponse(candidate)
+        return FileResponse(_dist / "index.html")

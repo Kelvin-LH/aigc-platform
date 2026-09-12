@@ -6,10 +6,9 @@
         <small>8× V100 · 多模态算力池</small>
       </div>
       <nav>
-        <a v-for="m in menus" :key="m.path" :href="'#' + m.path"
-           :class="{ 'router-link-active': $route.path === m.path }">
+        <router-link v-for="m in menus" :key="m.path" :to="m.path" active-class="router-link-active">
           <span>{{ m.icon }}</span>{{ m.title }}
-        </a>
+        </router-link>
       </nav>
       <div style="padding: 14px 20px; border-top: 1px solid rgba(255,255,255,.08)">
         <div style="font-size: 13px; color: #fff">{{ auth.username }}</div>
