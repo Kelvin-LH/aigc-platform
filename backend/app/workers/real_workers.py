@@ -46,6 +46,12 @@ RESULTS_DIR = Path("results/generated")
 # (adapter, gpu_id) -> 已加载模型（常驻）
 _cache: dict[tuple, object] = {}
 
+# 模型加载必须串行：transformers/diffusers 低内存加载（meta device）不支持并发 .to()，
+# 并发加载会抛 NotImplementedError。推理阶段不受锁影响，仍可多卡并发。
+import threading
+
+_load_lock = threading.Lock()
+
 
 def qwen_available() -> bool:
     return (MODEL_DIRS["qwen"] / "config.json").exists()
@@ -67,17 +73,21 @@ def get_runner(adapter: str, task_type: str):
 # ---------------- Qwen 文生文 ----------------
 
 def _load_qwen(gpu_id: int):
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    with _load_lock:
+        if ("qwen", gpu_id) in _cache:
+            return _cache[("qwen", gpu_id)]
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    d = str(MODEL_DIRS["qwen"])
-    log.info("loading Qwen from %s -> cuda:%d", d, gpu_id)
-    tok = AutoTokenizer.from_pretrained(d)
-    model = AutoModelForCausalLM.from_pretrained(
-        d, torch_dtype=torch.float16, device_map={"": gpu_id}
-    )
-    model.eval()
-    return tok, model
+        d = str(MODEL_DIRS["qwen"])
+        log.info("loading Qwen from %s -> cuda:%d", d, gpu_id)
+        tok = AutoTokenizer.from_pretrained(d)
+        model = AutoModelForCausalLM.from_pretrained(
+            d, torch_dtype=torch.float16, device_map={"": gpu_id}
+        )
+        model.eval()
+        _cache[("qwen", gpu_id)] = (tok, model)
+        return tok, model
 
 
 async def run_qwen(db, task, ti, on_stage, cancel_check, gpu_ids) -> dict:
@@ -132,23 +142,27 @@ async def run_qwen(db, task, ti, on_stage, cancel_check, gpu_ids) -> dict:
 # ---------------- SDXL 文生图 ----------------
 
 def _load_sdxl(gpu_id: int):
-    import torch
-    from diffusers import StableDiffusionXLPipeline
+    with _load_lock:
+        if ("sdxl", gpu_id) in _cache:
+            return _cache[("sdxl", gpu_id)]
+        import torch
+        from diffusers import StableDiffusionXLPipeline
 
-    d = str(MODEL_DIRS["sdxl"])
-    log.info("loading SDXL from %s -> cuda:%d", d, gpu_id)
-    pipe = StableDiffusionXLPipeline.from_pretrained(
-        d, torch_dtype=torch.float16, use_safetensors=True, variant="fp16"
-    )
-    pipe.to(f"cuda:{gpu_id}")
-    # V100 16GB 显存优化（兼容新旧 diffusers API）
-    if hasattr(pipe, "enable_attention_slicing"):
-        pipe.enable_attention_slicing()
-    if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
-        pipe.vae.enable_slicing()
-    if hasattr(pipe, "enable_vae_slicing"):
-        pipe.enable_vae_slicing()
-    return pipe
+        d = str(MODEL_DIRS["sdxl"])
+        log.info("loading SDXL from %s -> cuda:%d", d, gpu_id)
+        pipe = StableDiffusionXLPipeline.from_pretrained(
+            d, torch_dtype=torch.float16, use_safetensors=True, variant="fp16"
+        )
+        pipe.to(f"cuda:{gpu_id}")
+        # V100 16GB 显存优化（兼容新旧 diffusers API）
+        if hasattr(pipe, "enable_attention_slicing"):
+            pipe.enable_attention_slicing()
+        if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
+            pipe.vae.enable_slicing()
+        if hasattr(pipe, "enable_vae_slicing"):
+            pipe.enable_vae_slicing()
+        _cache[("sdxl", gpu_id)] = pipe
+        return pipe
 
 
 async def run_sdxl(db, task, ti, on_stage, cancel_check, gpu_ids) -> dict:
