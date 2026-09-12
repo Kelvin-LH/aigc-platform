@@ -59,6 +59,35 @@
         </el-col>
       </el-row>
 
+      <!-- 视频任务：时长/分辨率/FPS -->
+      <el-row v-if="isVideo" :gutter="12">
+        <el-col :span="8">
+          <el-form-item label="视频时长">
+            <el-select v-model="vDuration">
+              <el-option label="3 秒" value="3" /><el-option label="5 秒" value="5" />
+              <el-option label="8 秒" value="8" /><el-option label="10 秒" value="10" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="分辨率">
+            <el-select v-model="vRes">
+              <el-option label="480P（854×480，快速）" value="854x480" />
+              <el-option label="720P（1280×720，标准）" value="1280x720" />
+              <el-option label="1080P（1920×1080，高质量）" value="1920x1080" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="帧率 FPS">
+            <el-select v-model="vFps">
+              <el-option label="8（草稿）" value="8" /><el-option label="16（标准）" value="16" />
+              <el-option label="24（流畅）" value="24" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+      </el-row>
+
       <el-collapse v-if="showAdvanced">
         <el-collapse-item title="高级设置（采样步数 / CFG / 时长 / FPS）">
           <el-row :gutter="12">
@@ -134,6 +163,10 @@ const props = defineProps<{
 }>()
 
 const showAdvanced = computed(() => ['image-to-video', 'text-to-video'].includes(props.taskType))
+const isVideo = computed(() => ['image-to-video', 'text-to-video'].includes(props.taskType))
+const vDuration = ref('5')
+const vRes = ref('1280x720')
+const vFps = ref('16')
 const stageFlow = computed(() =>
   props.taskType === 'text-to-text'
     ? ['排队', '分配 GPU', '加载模型', 'Prompt 编码', '文本生成', '写回历史']
@@ -199,6 +232,11 @@ async function submit() {
   submitting.value = true
   try {
     const cleanParams = Object.fromEntries(Object.entries(params.value).filter(([, v]) => v !== ''))
+    if (isVideo.value) {
+      cleanParams.duration = vDuration.value
+      cleanParams.resolution = vRes.value
+      cleanParams.fps = vFps.value
+    }
     task.value = await api.submitTask(props.endpoint, {
       task_type: props.taskType,
       input_asset_ids: asset.value ? [asset.value.id] : [],

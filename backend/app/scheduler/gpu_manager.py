@@ -13,6 +13,7 @@ PROFILE_SIZES: dict[str, int] = {
     ResourceProfile.M.value: 2,
     ResourceProfile.L.value: 4,
     ResourceProfile.XL.value: 8,
+    ResourceProfile.API.value: 0,  # 外部 API 调用不占 GPU
 }
 
 

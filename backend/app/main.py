@@ -1,5 +1,6 @@
 """应用入口：lifespan 中启动调度循环、建表并注入种子数据。"""
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -47,6 +48,30 @@ def seed(db) -> None:
                 supports_cpu_offload=offload, supports_multi_gpu=multi,
                 license=lic, adapter=adapter, health="unknown",
             ))
+    db.commit()
+
+    # 外部 LLM API 模型（OpenAI 兼容协议）：配置了对应 API Key 才注册并启用；
+    # 同档位按 id 倒序取最新（见 task_service.resolve_model），API 模型后来居上
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        if not db.query(ModelInfo).filter(ModelInfo.name == "DeepSeek-Chat(API)").first():
+            db.add(ModelInfo(
+                capability="text-to-text", name="DeepSeek-Chat(API)",
+                version=os.environ.get("DEEPSEEK_API_MODEL", "deepseek-chat"),
+                quality_tier="high", resource_profile="API", dtype="api",
+                min_gpus=0, peak_vram_gb=0, license="DeepSeek API", adapter="deepseek_api",
+            ))
+            db.query(ModelInfo).filter(ModelInfo.name == "Qwen2.5-14B-Instruct") \
+                .update({ModelInfo.enabled: False})
+    if os.environ.get("OPENAI_API_KEY"):
+        if not db.query(ModelInfo).filter(ModelInfo.name == "OpenAI-GPT(API)").first():
+            db.add(ModelInfo(
+                capability="text-to-text", name="OpenAI-GPT(API)",
+                version=os.environ.get("OPENAI_API_MODEL", "gpt-4o-mini"),
+                quality_tier="fast", resource_profile="API", dtype="api",
+                min_gpus=0, peak_vram_gb=0, license="OpenAI API", adapter="openai_api",
+            ))
+            db.query(ModelInfo).filter(ModelInfo.name == "Qwen2.5-3B-Instruct") \
+                .update({ModelInfo.enabled: False})
     db.commit()
 
 

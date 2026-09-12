@@ -51,15 +51,16 @@ def validate_task_spec(db: Session, spec) -> None:
 
 
 def resolve_model(db: Session, task_type: str, quality_tier: str) -> ModelInfo:
-    """按能力 + 质量档位解析模型；找不到启用模型时报错。"""
+    """按能力 + 质量档位解析模型；找不到启用模型时报错。
+    同档位多个模型时取最新注册的（后注册的 API 模型优先生效）。"""
     q = db.query(ModelInfo).filter(
         ModelInfo.capability == task_type,
         ModelInfo.quality_tier == quality_tier,
         ModelInfo.enabled.is_(True),
-    )
+    ).order_by(ModelInfo.id.desc())
     model = q.first() or db.query(ModelInfo).filter(
         ModelInfo.capability == task_type, ModelInfo.enabled.is_(True)
-    ).first()
+    ).order_by(ModelInfo.id.desc()).first()
     if model is None:
         raise HTTPException(503, f"能力 {task_type} 暂无可用模型")
     return model

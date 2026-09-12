@@ -161,8 +161,8 @@ class Scheduler:
 
         model = db.query(ModelInfo).filter(ModelInfo.name == task.model_key).first()
         runner = real_workers.get_runner(model.adapter, task.task_type) if model else None
+        ti = db.get(TaskInput, task.id)
         if runner is not None:
-            ti = db.get(TaskInput, task.id)
             result = await runner(db, task, ti, on_stage, cancel_check=lambda: self.is_canceled(task.id),
                                   gpu_ids=gpu_ids)
         else:
@@ -171,6 +171,7 @@ class Scheduler:
                 on_stage=on_stage,
                 cancel_check=lambda: self.is_canceled(task.id),
                 gpu_ids=gpu_ids,
+                params=ti.params if ti else {},
             )
 
         task.status = TaskStatus.ENCODING.value

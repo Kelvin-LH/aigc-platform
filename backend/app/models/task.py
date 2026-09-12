@@ -16,12 +16,14 @@ class TaskType(str, enum.Enum):
 
 
 class ResourceProfile(str, enum.Enum):
-    """资源档位：S=1卡 / M=2卡 / L=4卡 / XL=8卡（gang scheduling，整组分配）。"""
+    """资源档位：S=1卡 / M=2卡 / L=4卡 / XL=8卡（gang scheduling，整组分配）；
+    API=外部模型 API，不占用本机 GPU。"""
 
     S = "S"
     M = "M"
     L = "L"
     XL = "XL"
+    API = "API"
 
 
 class TaskStatus(str, enum.Enum):

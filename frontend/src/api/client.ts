@@ -31,7 +31,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const api = {
   login: (username: string, password: string) =>
-    request<{ access_token: string }>('POST', '/auth/login', { username, password }),
+    request<{ access_token: string; user: { username: string; role: string } }>('POST', '/auth/login', { username, password }),
+  me: () => request<{ username: string; role: string }>('GET', '/auth/me'),
 
   listTasks: (status?: string) =>
     request<TaskOut[]>('GET', `/tasks${status ? `?status=${status}` : ''}`),

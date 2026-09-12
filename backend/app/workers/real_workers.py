@@ -67,7 +67,82 @@ def get_runner(adapter: str, task_type: str):
         return run_qwen
     if adapter == "sdxl" and task_type == "text-to-image" and sdxl_available():
         return run_sdxl
+    # OpenAI 兼容外部 API（OpenAI / DeepSeek 等），配置了 API Key 即启用
+    if adapter in ("openai_api", "deepseek_api") and task_type == "text-to-text" and _api_key(adapter):
+        return run_openai_api
     return None
+
+
+# ---------------- 外部 LLM API（OpenAI 兼容协议） ----------------
+
+def _api_config(adapter: str) -> tuple[str, str, str]:
+    if adapter == "deepseek_api":
+        return (
+            os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
+            os.environ.get("DEEPSEEK_API_KEY", ""),
+            os.environ.get("DEEPSEEK_API_MODEL", "deepseek-chat"),
+        )
+    return (
+        os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1"),
+        os.environ.get("OPENAI_API_KEY", ""),
+        os.environ.get("OPENAI_API_MODEL", "gpt-4o-mini"),
+    )
+
+
+def _api_key(adapter: str) -> bool:
+    return bool(_api_config(adapter)[1])
+
+
+async def run_openai_api(db, task, ti, on_stage, cancel_check, gpu_ids) -> dict:
+    """OpenAI 兼容 /chat/completions 调用；不占用 GPU（resource_profile=API）。"""
+    import httpx
+
+    started = time.perf_counter()
+    await on_stage("调用模型 API", 40)
+    if cancel_check():
+        raise InterruptedError("canceled")
+
+    adapter = "openai_api"
+    try:
+        from app.models.model_registry import ModelInfo
+        m = db.query(ModelInfo).filter(ModelInfo.name == task.model_key).first()
+        if m is not None:
+            adapter = m.adapter
+    except Exception:
+        pass
+    base, key, model_name = _api_config(adapter)
+
+    params = ti.params or {}
+    body = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": ti.prompt}],
+        "max_tokens": int(params.get("max_tokens", 1024)),
+        "temperature": float(params.get("temperature", 0.7)),
+        "stream": False,
+    }
+    async with httpx.AsyncClient(timeout=300) as client:
+        resp = await client.post(
+            base.rstrip("/") + "/chat/completions",
+            json=body,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+    resp.raise_for_status()
+    if cancel_check():
+        raise InterruptedError("canceled")
+
+    answer = resp.json()["choices"][0]["message"]["content"]
+    await on_stage("写回历史", 90)
+    out_dir = RESULTS_DIR / "text"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fn = out_dir / f"{uuid.uuid4().hex}.txt"
+    fn.write_text(answer, encoding="utf-8")
+    return {
+        "seed": int(params.get("seed", 0)),
+        "runtime_ms": int((time.perf_counter() - started) * 1000),
+        "output_hint": f"/files/{fn.relative_to('results').as_posix()}",
+        "text": answer,
+        "model_version": model_name,
+    }
 
 
 # ---------------- Qwen 文生文 ----------------

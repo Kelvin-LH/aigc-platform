@@ -26,10 +26,12 @@
 </template>
 
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import TaskPanel from '../components/TaskPanel.vue'
 
 const auth = useAuthStore()
+onMounted(() => auth.hydrate())
 
 const menus = [
   { path: '/dashboard', title: '工作台', icon: '🏠' },

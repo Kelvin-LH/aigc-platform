@@ -74,5 +74,5 @@ export const STATUS_TYPES: Record<string, string> = {
 }
 
 export const PROFILE_LABELS: Record<string, string> = {
-  S: '轻量 1卡', M: '中量 2卡', L: '重量 4卡', XL: '超重 8卡'
+  S: '轻量 1卡', M: '中量 2卡', L: '重量 4卡', XL: '超重 8卡', API: '外部API · 0卡'
 }

@@ -26,20 +26,27 @@ async def run_mock_pipeline(
     on_stage: Callable[[str, int], Awaitable[None]],
     cancel_check: Callable[[], bool],
     gpu_ids: list[int],
+    params: dict | None = None,
 ) -> dict:
     """执行模拟推理流水线，返回输出信息。真实部署替换为模型调用。"""
+    params = params or {}
     stages = STAGES.get(task_type, ["加载模型", "推理", "上传结果"])
     total = len(stages)
     seed = random.randint(0, 2**31 - 1)
     started = time.perf_counter()
+    # 视频参数：时长/分辨率/FPS 写入结果元数据，并按时长放大模拟耗时
+    duration = float(params.get("duration", 5))
+    fps = int(params.get("fps", 16))
+    resolution = str(params.get("resolution", "1280x720"))
+    duration_scale = max(0.5, min(duration / 5, 3.0))
 
     for i, stage in enumerate(stages):
         if cancel_check():
             raise InterruptedError("canceled")
         await on_stage(stage, int(i / total * 90))
-        # 模拟该阶段耗时：文本任务轻，视频任务重（与资源档位正相关）
+        # 模拟该阶段耗时：文本任务轻，视频任务重（与资源档位/时长正相关）
         weight = 0.3 if task_type == TaskType.TEXT_TO_TEXT.value else 0.6 * len(gpu_ids) ** 0.5
-        await asyncio.sleep(weight + 0.2)
+        await asyncio.sleep((weight + 0.2) * duration_scale)
 
     if cancel_check():
         raise InterruptedError("canceled")
@@ -48,4 +55,5 @@ async def run_mock_pipeline(
         "seed": seed,
         "runtime_ms": int((time.perf_counter() - started) * 1000),
         "output_hint": f"generated/{task_type}/{seed}",
+        "video_meta": {"duration_s": duration, "fps": fps, "resolution": resolution},
     }

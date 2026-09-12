@@ -18,6 +18,16 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('role', role.value)
   }
 
+  /** 有 token 但缺用户名（如老版本登录过）时，从 /auth/me 补全 */
+  async function hydrate() {
+    if (!token.value || username.value !== '未登录') return
+    try {
+      const { api } = await import('../api/client')
+      const me = await api.me()
+      setUser(me.username, me.role)
+    } catch { /* token 失效则保持未登录 */ }
+  }
+
   function logout() {
     token.value = ''
     username.value = '未登录'
@@ -25,5 +35,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.clear()
   }
 
-  return { token, username, role, setToken, setUser, logout }
+  return { token, username, role, setToken, setUser, hydrate, logout }
 })
