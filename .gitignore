@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.db
+
+# Node
+node_modules/
+dist/
+
+# 运行产物
+backend/results/*
+!backend/results/.gitignore
+backend/uvicorn_test.log
+*.log
+
+# 环境
+.env
+.DS_Store

@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "aigc-backend"
+    metrics_path: /healthz
+    static_configs:
+      - targets: ["backend:8600"]
+  - job_name: "dcgm-gpu"
+    static_configs:
+      - targets: ["dcgm-exporter:9400"]

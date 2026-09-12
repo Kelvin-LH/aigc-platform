@@ -1,0 +1,93 @@
+version: "3.9"
+
+# 单机 8×V100 部署：nvidia container toolkit + docker compose
+# GPU Worker 容器按需添加 device_ids（S=1 / M=2 / L=4 / XL=8）
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: aigc
+      POSTGRES_PASSWORD: aigc
+      POSTGRES_DB: aigc
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aigc"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://aigc:aigc@postgres:5432/aigc
+      USE_REDIS: "false"
+      REDIS_URL: redis://redis:6379/0
+      USE_MINIO: "true"
+      MINIO_ENDPOINT: minio:9000
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      TOTAL_GPUS: 8
+    ports:
+      - "8600:8600"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    # 接入全部 GPU（生产时按资源档位拆分 Worker 并指定 device_ids）
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  # 可选监控：Prometheus + Grafana + DCGM Exporter（按 V100 支持情况配置）
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  dcgm-exporter:
+    image: nvidia/dcgm-exporter:latest
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
