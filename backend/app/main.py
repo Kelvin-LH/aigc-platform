@@ -103,5 +103,7 @@ if _dist.exists():
     def spa_fallback(full_path: str):
         candidate = (_dist / full_path).resolve()
         if full_path and candidate.is_file() and str(candidate).startswith(str(_dist.resolve())):
-            return FileResponse(candidate)
-        return FileResponse(_dist / "index.html")
+            # 静态资源（带内容哈希）可长缓存
+            return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+        # index.html 禁止缓存：前端发版后浏览器立即拉新版本
+        return FileResponse(_dist / "index.html", headers={"Cache-Control": "no-cache"})

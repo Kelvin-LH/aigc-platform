@@ -98,6 +98,21 @@
     <div v-if="task.error_code" style="color: #d9534f; margin-top: 8px">
       失败：{{ task.error_code }} <el-button size="small" link type="primary" @click="retry">重试</el-button>
     </div>
+
+    <!-- 生成结果 -->
+    <div v-if="output" style="margin-top: 14px">
+      <div class="muted" style="margin-bottom: 6px">
+        生成结果（seed: {{ output.seed }} · 耗时 {{ (output.runtime_ms / 1000).toFixed(1) }}s ·
+        模型 {{ output.model_version }}）
+        <el-button size="small" link type="primary" :href="output.uri" target="_blank">打开原图/原文</el-button>
+      </div>
+      <img v-if="isImageOutput" :src="output.uri"
+           style="max-width: 100%; max-height: 480px; border-radius: 8px; border: 1px solid #e4e7ed"
+           :alt="task.task_type" />
+      <pre v-else-if="outputText"
+           style="white-space: pre-wrap; background: #f7f8fa; padding: 14px; border-radius: 8px;
+                  font-size: 14px; line-height: 1.7; margin: 0">{{ outputText }}</pre>
+    </div>
   </div>
 </template>
 
@@ -138,7 +153,24 @@ const submitting = ref(false)
 const error = ref('')
 const task = ref<TaskOut | null>(null)
 const event = ref<TaskEvent | null>(null)
+const output = ref<any>(null)
+const outputText = ref('')
 let es: EventSource | undefined
+
+const isImageOutput = computed(() => !!output.value?.uri?.match(/\.(png|jpe?g|webp)$/i))
+
+async function loadDetail(id: string) {
+  try {
+    const d: any = await api.getTaskDetail(id)
+    const first = d.outputs?.[0]
+    if (!first) return
+    output.value = first
+    if (!isImageOutput.value && first.uri?.endsWith('.txt')) {
+      const res = await fetch(first.uri)
+      outputText.value = await res.text()
+    }
+  } catch { /* 静默 */ }
+}
 
 const previewUrl = computed(() => asset.value ? `/files/uploads/${asset.value.uri.split('/').pop()}` : '')
 const progress = computed(() => event.value?.progress ?? task.value?.progress ?? 0)
@@ -188,8 +220,11 @@ async function submit() {
 function track(id: string) {
   es?.close()
   event.value = null
+  output.value = null
+  outputText.value = ''
   es = subscribeTaskEvents(id, (e) => {
     event.value = e
+    if (e.status === 'SUCCEEDED') loadDetail(id)
   })
 }
 

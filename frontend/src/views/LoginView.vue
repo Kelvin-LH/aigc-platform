@@ -37,8 +37,9 @@ const auth = useAuthStore()
 async function doLogin() {
   loading.value = true
   try {
-    const res = await api.login(username.value, password.value)
+    const res: any = await api.login(username.value, password.value)
     auth.setToken(res.access_token)
+    auth.setUser(res.user?.username ?? username.value, res.user?.role ?? '')
     router.push('/dashboard')
   } catch (e: any) {
     ElMessage.error(e.message ?? '登录失败')

@@ -9,17 +9,21 @@ export const useAuthStore = defineStore('auth', () => {
   function setToken(t: string) {
     token.value = t
     localStorage.setItem('token', t)
-    try {
-      const payload = JSON.parse(atob(t.split('.')[1]))
-      role.value = payload.role ?? ''
-      localStorage.setItem('role', role.value)
-    } catch { /* ignore */ }
+  }
+
+  function setUser(name: string, r: string) {
+    username.value = name || '未登录'
+    role.value = r ?? ''
+    localStorage.setItem('username', username.value)
+    localStorage.setItem('role', role.value)
   }
 
   function logout() {
     token.value = ''
+    username.value = '未登录'
+    role.value = ''
     localStorage.clear()
   }
 
-  return { token, username, role, setToken, logout }
+  return { token, username, role, setToken, setUser, logout }
 })
