@@ -166,12 +166,19 @@ class Scheduler:
             result = await runner(db, task, ti, on_stage, cancel_check=lambda: self.is_canceled(task.id),
                                   gpu_ids=gpu_ids)
         else:
+            # mock 也产出真实文件（占位图/占位视频/文本），保证"完成"必有可预览结果
+            assets = []
+            if ti and ti.input_asset_ids:
+                from app.models.asset import Asset
+                assets = [a for a in db.query(Asset).filter(Asset.id.in_(ti.input_asset_ids)).all()]
             result = await run_mock_pipeline(
                 task.task_type,
                 on_stage=on_stage,
                 cancel_check=lambda: self.is_canceled(task.id),
                 gpu_ids=gpu_ids,
                 params=ti.params if ti else {},
+                prompt=ti.prompt if ti else "",
+                input_assets=assets,
             )
 
         task.status = TaskStatus.ENCODING.value

@@ -60,7 +60,9 @@
       <h4 style="margin: 14px 0 6px">生成结果</h4>
       <div v-if="!detail.outputs.length" class="muted">无输出</div>
       <div v-for="o in detail.outputs" :key="o.id" style="margin-bottom: 12px">
-        <img v-if="o.uri?.match(/\.(png|jpe?g|webp)$/i)" :src="o.uri"
+        <video v-if="o.uri?.endsWith('.mp4')" :src="o.uri" controls
+               style="max-width: 100%; max-height: 360px; border-radius: 8px; background: #000" />
+        <img v-else-if="o.uri?.match(/\.(png|jpe?g|webp)$/i)" :src="o.uri"
              style="max-width: 100%; max-height: 400px; border-radius: 8px" alt="生成图片" />
         <pre v-else-if="detailText && o.uri?.endsWith('.txt')"
              style="white-space: pre-wrap; background: #f7f8fa; padding: 12px; border-radius: 8px; margin: 0">{{ detailText }}</pre>

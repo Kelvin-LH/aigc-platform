@@ -201,7 +201,9 @@
         模型 {{ output.model_version }}）
         <el-button size="small" link type="primary" :href="output.uri" target="_blank">打开原图/原文</el-button>
       </div>
-      <img v-if="isImageOutput" :src="output.uri"
+      <video v-if="isVideoOutput" :src="output.uri" controls autoplay loop muted
+             style="max-width: 100%; max-height: 480px; border-radius: 8px; background: #000" />
+      <img v-else-if="isImageOutput" :src="output.uri"
            style="max-width: 100%; max-height: 480px; border-radius: 8px; border: 1px solid #e4e7ed"
            :alt="task.task_type" />
       <pre v-else-if="outputText"
@@ -262,6 +264,7 @@ const outputText = ref('')
 let es: EventSource | undefined
 
 const isImageOutput = computed(() => !!output.value?.uri?.match(/\.(png|jpe?g|webp)$/i))
+const isVideoOutput = computed(() => !!output.value?.uri?.match(/\.mp4$/i))
 
 async function loadDetail(id: string) {
   try {
@@ -269,7 +272,7 @@ async function loadDetail(id: string) {
     const first = d.outputs?.[0]
     if (!first) return
     output.value = first
-    if (!isImageOutput.value && first.uri?.endsWith('.txt')) {
+    if (!isImageOutput.value && !isVideoOutput.value && first.uri?.endsWith('.txt')) {
       const res = await fetch(first.uri)
       outputText.value = await res.text()
     }
