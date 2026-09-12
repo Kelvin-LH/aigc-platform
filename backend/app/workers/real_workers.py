@@ -1,0 +1,184 @@
+"""
+真实模型 Worker 适配器：将 TaskSpec 转换为本地模型推理调用（V100 FP16 路径）。
+
+- qwen  : Qwen2.5-3B-Instruct（文生文，S 档 1 卡）
+- sdxl  : stable-diffusion-xl-base-1.0（文生图，M 档 2 卡，用首卡）
+- 其余 adapter（flux_kontext / wan22 等）未部署时回落 mock 流水线。
+
+模型目录约定：$MODEL_ROOT/<name>（默认 ~/models）。目录缺失或依赖缺失时 get_runner
+返回 None，调度器自动回落 mock —— 保证平台"先跑通编排、再逐步接入模型"的路线。
+模型常驻显存（按 (adapter, gpu) 缓存），避免重复加载。
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import random
+import time
+import uuid
+from pathlib import Path
+
+log = logging.getLogger("worker")
+
+MODEL_ROOT = Path(os.environ.get("MODEL_ROOT", str(Path.home() / "models")))
+MODEL_DIRS = {
+    "qwen": MODEL_ROOT / "Qwen2.5-3B-Instruct",
+    "sdxl": MODEL_ROOT / "stable-diffusion-xl-base-1.0",
+}
+RESULTS_DIR = Path("results/generated")
+
+# (adapter, gpu_id) -> 已加载模型（常驻）
+_cache: dict[tuple, object] = {}
+
+
+def qwen_available() -> bool:
+    return (MODEL_DIRS["qwen"] / "config.json").exists()
+
+
+def sdxl_available() -> bool:
+    return (MODEL_DIRS["sdxl"] / "model_index.json").exists()
+
+
+def get_runner(adapter: str, task_type: str):
+    """返回该 (adapter, task_type) 的异步推理函数；未部署返回 None → 调度器回落 mock。"""
+    if adapter == "qwen" and task_type == "text-to-text" and qwen_available():
+        return run_qwen
+    if adapter == "sdxl" and task_type == "text-to-image" and sdxl_available():
+        return run_sdxl
+    return None
+
+
+# ---------------- Qwen 文生文 ----------------
+
+def _load_qwen(gpu_id: int):
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    d = str(MODEL_DIRS["qwen"])
+    log.info("loading Qwen from %s -> cuda:%d", d, gpu_id)
+    tok = AutoTokenizer.from_pretrained(d)
+    model = AutoModelForCausalLM.from_pretrained(
+        d, torch_dtype=torch.float16, device_map={"": gpu_id}
+    )
+    model.eval()
+    return tok, model
+
+
+async def run_qwen(db, task, ti, on_stage, cancel_check, gpu_ids) -> dict:
+    import torch
+
+    gpu = gpu_ids[0]
+    started = time.perf_counter()
+    await on_stage("加载模型", 15)
+    key = ("qwen", gpu)
+    if key not in _cache:
+        _cache[key] = await asyncio.to_thread(_load_qwen, gpu)
+    tok, model = _cache[key]
+    if cancel_check():
+        raise InterruptedError("canceled")
+
+    await on_stage("Prompt 编码", 35)
+    params = ti.params or {}
+    messages = [{"role": "user", "content": ti.prompt}]
+    prompt_text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tok([prompt_text], return_tensors="pt").to(model.device)
+    max_new_tokens = int(params.get("max_tokens", 512))
+    temperature = float(params.get("temperature", 0.7))
+
+    await on_stage("文本生成", 55)
+
+    def _generate():
+        with torch.no_grad():
+            return model.generate(
+                **inputs, max_new_tokens=max_new_tokens, do_sample=True,
+                temperature=temperature, top_p=0.9,
+                pad_token_id=tok.eos_token_id,
+            )
+
+    output_ids = await asyncio.to_thread(_generate)
+    if cancel_check():
+        raise InterruptedError("canceled")
+    answer = tok.decode(output_ids[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+
+    await on_stage("写回历史", 90)
+    out_dir = RESULTS_DIR / "text"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fn = out_dir / f"{uuid.uuid4().hex}.txt"
+    fn.write_text(answer, encoding="utf-8")
+    return {
+        "seed": int(params.get("seed", 0)),
+        "runtime_ms": int((time.perf_counter() - started) * 1000),
+        "output_hint": f"/files/{fn.relative_to('results').as_posix()}",
+        "text": answer,
+    }
+
+
+# ---------------- SDXL 文生图 ----------------
+
+def _load_sdxl(gpu_id: int):
+    import torch
+    from diffusers import StableDiffusionXLPipeline
+
+    d = str(MODEL_DIRS["sdxl"])
+    log.info("loading SDXL from %s -> cuda:%d", d, gpu_id)
+    pipe = StableDiffusionXLPipeline.from_pretrained(
+        d, torch_dtype=torch.float16, use_safetensors=True, variant="fp16"
+    )
+    pipe.to(f"cuda:{gpu_id}")
+    # V100 16GB 显存优化
+    pipe.enable_attention_slicing()
+    pipe.enable_vae_slicing()
+    return pipe
+
+
+async def run_sdxl(db, task, ti, on_stage, cancel_check, gpu_ids) -> dict:
+    import torch
+
+    gpu = gpu_ids[0]
+    started = time.perf_counter()
+    await on_stage("加载模型", 15)
+    key = ("sdxl", gpu)
+    if key not in _cache:
+        _cache[key] = await asyncio.to_thread(_load_sdxl, gpu)
+    pipe = _cache[key]
+    if cancel_check():
+        raise InterruptedError("canceled")
+
+    params = ti.params or {}
+    seed = int(params.get("seed", random.randint(0, 2**31 - 1)))
+    steps = max(1, int(params.get("steps", 25)))
+    cfg = float(params.get("cfg", 5.0))
+    width = int(params.get("width", 1024))
+    height = int(params.get("height", 1024))
+    generator = torch.Generator(device=f"cuda:{gpu}")
+    generator.manual_seed(seed)
+
+    await on_stage("Prompt 编码", 35)
+    await on_stage("扩散采样", 55)
+
+    def _infer():
+        return pipe(
+            prompt=ti.prompt,
+            negative_prompt=ti.negative_prompt or None,
+            num_inference_steps=steps,
+            guidance_scale=cfg,
+            width=width, height=height,
+            generator=generator,
+        ).images[0]
+
+    image = await asyncio.to_thread(_infer)
+    if cancel_check():
+        raise InterruptedError("canceled")
+    await on_stage("VAE 解码", 85)
+
+    out_dir = RESULTS_DIR / "image"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fn = out_dir / f"{uuid.uuid4().hex}.png"
+    await asyncio.to_thread(image.save, fn)
+    return {
+        "seed": seed,
+        "runtime_ms": int((time.perf_counter() - started) * 1000),
+        "output_hint": f"/files/{fn.relative_to('results').as_posix()}",
+        "image_size": f"{width}x{height}",
+    }

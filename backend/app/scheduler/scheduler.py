@@ -155,12 +155,23 @@ class Scheduler:
             db.commit()
             await self._emit(task.id, TaskStatus.RUNNING, stage, progress, task.gpu_ids)
 
-        result = await run_mock_pipeline(
-            task.task_type,
-            on_stage=on_stage,
-            cancel_check=lambda: self.is_canceled(task.id),
-            gpu_ids=gpu_ids,
-        )
+        # 按模型注册表的 adapter 选择真实推理；未部署（依赖/权重缺失）回落 mock 流水线
+        from app.models.model_registry import ModelInfo
+        from app.workers import real_workers
+
+        model = db.query(ModelInfo).filter(ModelInfo.name == task.model_key).first()
+        runner = real_workers.get_runner(model.adapter, task.task_type) if model else None
+        if runner is not None:
+            ti = db.get(TaskInput, task.id)
+            result = await runner(db, task, ti, on_stage, cancel_check=lambda: self.is_canceled(task.id),
+                                  gpu_ids=gpu_ids)
+        else:
+            result = await run_mock_pipeline(
+                task.task_type,
+                on_stage=on_stage,
+                cancel_check=lambda: self.is_canceled(task.id),
+                gpu_ids=gpu_ids,
+            )
 
         task.status = TaskStatus.ENCODING.value
         task.stage, task.progress = "结果编码", 95

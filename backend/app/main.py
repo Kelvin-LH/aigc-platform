@@ -85,6 +85,14 @@ app.include_router(monitor.router, prefix=api_prefix)
 # 本地磁盘存储时对外提供结果文件
 app.mount("/files", StaticFiles(directory="results"), name="files")
 
+# 服务器部署时由后端直接托管前端构建产物（frontend/dist），无需独立 node/nginx
+from pathlib import Path
+
+_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if _dist.exists():
+    # 注册在 API 路由之后，不影响 /api、/files 的匹配
+    app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")
+
 
 @app.get("/healthz")
 def healthz():
