@@ -25,7 +25,7 @@ async def generate_text(body: TaskCreate, user: User = Depends(get_current_user)
     if body.task_type != TaskType.TEXT_TO_TEXT:
         body.task_type = TaskType.TEXT_TO_TEXT
     task = create_task(db, user.id, body)
-    await scheduler.submit(task, task.priority)
+    await scheduler.submit(db, task, task.priority)
     audit(db, user.id, "submit_task", "task", task.id, ip, body.task_type)
     return task
 
@@ -35,7 +35,7 @@ async def generate_image_edit(body: TaskCreate, user: User = Depends(get_current
                               db: Session = Depends(get_db), ip: str = Depends(get_client_ip)):
     body.task_type = TaskType.IMAGE_TO_IMAGE
     task = create_task(db, user.id, body)
-    await scheduler.submit(task, task.priority)
+    await scheduler.submit(db, task, task.priority)
     audit(db, user.id, "submit_task", "task", task.id, ip, body.task_type)
     return task
 
@@ -45,7 +45,7 @@ async def generate_i2v(body: TaskCreate, user: User = Depends(get_current_user),
                        db: Session = Depends(get_db), ip: str = Depends(get_client_ip)):
     body.task_type = TaskType.IMAGE_TO_VIDEO
     task = create_task(db, user.id, body)
-    await scheduler.submit(task, task.priority)
+    await scheduler.submit(db, task, task.priority)
     audit(db, user.id, "submit_task", "task", task.id, ip, body.task_type)
     return task
 
@@ -55,7 +55,7 @@ async def generate_t2v(body: TaskCreate, user: User = Depends(get_current_user),
                        db: Session = Depends(get_db), ip: str = Depends(get_client_ip)):
     body.task_type = TaskType.TEXT_TO_VIDEO
     task = create_task(db, user.id, body)
-    await scheduler.submit(task, task.priority)
+    await scheduler.submit(db, task, task.priority)
     audit(db, user.id, "submit_task", "task", task.id, ip, body.task_type)
     return task
 
@@ -65,7 +65,7 @@ async def generate_t2i(body: TaskCreate, user: User = Depends(get_current_user),
                        db: Session = Depends(get_db), ip: str = Depends(get_client_ip)):
     body.task_type = TaskType.TEXT_TO_IMAGE
     task = create_task(db, user.id, body)
-    await scheduler.submit(task, task.priority)
+    await scheduler.submit(db, task, task.priority)
     audit(db, user.id, "submit_task", "task", task.id, ip, body.task_type)
     return task
 

@@ -91,7 +91,7 @@ async def retry_task(task_id: str, user: User = Depends(get_current_user), db: S
         priority=old.priority,
     )
     task = create_task(db, user.id, spec)
-    await scheduler.submit(task, task.priority)
+    await scheduler.submit(db, task, task.priority)
     return task
 
 
@@ -107,6 +107,13 @@ async def task_events(task_id: str, user: User = Depends(get_current_user)):
 
     async def gen():
         try:
+            # 先补发当前状态快照，避免订阅时任务已越过早期阶段导致事件断档（SSE 重连场景）
+            snapshot = scheduler.current_state(task_id)
+            if snapshot and snapshot["status"] != TaskStatus.QUEUED.value:
+                yield f"data: {json.dumps(snapshot, ensure_ascii=False)}\n\n"
+                if snapshot["status"] in (TaskStatus.SUCCEEDED.value, TaskStatus.FAILED.value,
+                                          TaskStatus.CANCELED.value):
+                    return
             while True:
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=15)

@@ -29,8 +29,8 @@ def queue_status(user: User = Depends(get_current_user), db: Session = Depends(g
         by_status[s.value] = db.query(Task).filter(Task.status == s.value).count()
     return {
         "tasks": by_status,
-        "queued_in_memory": len(scheduler.queue._items),
-        "running_now": len(scheduler._running) if hasattr(scheduler, "_running") else 0,
+        "queued_in_memory": scheduler.snapshot()["queued"],
+        "running_now": scheduler.snapshot()["running"],
     }
 
 

@@ -12,6 +12,7 @@ const routes = [
       { path: 'image-edit', component: () => import('../views/ImageEditView.vue'), meta: { title: '图生图' } },
       { path: 'image-to-video', component: () => import('../views/ImageToVideoView.vue'), meta: { title: '图生视频' } },
       { path: 'text-to-video', component: () => import('../views/TextToVideoView.vue'), meta: { title: '文生视频' } },
+      { path: 'text-to-image', component: () => import('../views/TextToImageView.vue'), meta: { title: '文生图' } },
       { path: 'assets', component: () => import('../views/AssetsView.vue'), meta: { title: '素材库' } },
       { path: 'tasks', component: () => import('../views/TasksView.vue'), meta: { title: '任务中心' } },
       { path: 'models', component: () => import('../views/ModelsView.vue'), meta: { title: '模型管理' } },

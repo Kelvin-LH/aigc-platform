@@ -22,9 +22,15 @@ GPU 占用分配 Worker。模型可独立升级，Web 请求不被分钟级视�
 ### GPU 资源池（gang scheduling）
 - V100 无 MIG，进程级隔离：`CUDA_VISIBLE_DEVICES` + 分布式锁 + NCCL
 - 档位 S(1)/M(2)/L(4)/XL(8)，整组 GPU 同时获取/释放，不做碎片式抢占
-- XL 任务等待整机空闲（drain 低优先级 Worker 后整组执行）
+- XL 任务等待整机空闲（可扩展为主动 drain 低优先级 Worker）
 - 实现：`backend/app/scheduler/gpu_manager.py`（开发模式进程内 asyncio；
-  生产模式切换 Redis 分布式锁，`USE_REDS=true`）
+  生产模式切换 Redis 分布式锁，`USE_REDIS=true`）
+
+### 并发模型
+- 调度循环 `pop(predicate)`：按优先级排序后跳过当前资源不可运行的任务，消除队头阻塞
+- 任务完成释放 GPU 后 `queue.notify()` 唤醒调度循环重试 predicate（防丢唤醒死锁）
+- 每任务独立 asyncio.Task + 独立 DB 会话；GPU 分配由 GPUManager 内部 asyncio.Lock 串行化
+- 并发回归测试：`backend/tests/test_concurrency.py`（7 卡并行 / XL 独占 / 混合并发 / 取消 / GPU 无泄漏）
 
 ### TaskSpec 与 Adapter
 统一任务规格 `TaskSpec`（task_type、input_assets、prompt、model_profile、params…），

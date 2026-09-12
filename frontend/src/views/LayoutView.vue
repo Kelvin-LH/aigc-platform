@@ -38,6 +38,7 @@ const menus = [
   { path: '/image-edit', title: '图生图', icon: '🖼️' },
   { path: '/image-to-video', title: '图生视频', icon: '🎬' },
   { path: '/text-to-video', title: '文生视频', icon: '🎞️' },
+  { path: '/text-to-image', title: '文生图', icon: '🎨' },
   { path: '/assets', title: '素材库', icon: '📁' },
   { path: '/tasks', title: '任务中心', icon: '📋' },
   { path: '/models', title: '模型管理', icon: '🧠' },

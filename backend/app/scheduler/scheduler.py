@@ -1,6 +1,12 @@
 """
 调度器主循环：从优先级队列取任务 → gang scheduling 分配整组 GPU → 执行 Worker →
 状态机推进（QUEUED→ALLOCATING→RUNNING→ENCODING→UPLOADING→SUCCEEDED）→ 广播进度事件。
+
+并发设计：
+- predicate 调度：队首资源不足时跳过它调度后续可运行任务，消除队头阻塞（XL 等整机空闲，
+  不阻塞 S/M/L 小任务；S/M 任务在 8 卡内自然并发）。
+- 每个任务独立 asyncio.Task + 独立 DB 会话，互不阻塞；GPU 分配由 GPUManager 内部锁串行化。
+- 取消语义：排队任务直接置 CANCELED；运行中任务由 Worker 在阶段边界检查后中断，GPU 必然释放。
 """
 from __future__ import annotations
 
@@ -11,12 +17,13 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
-from app.models.asset import Asset
-from app.models.task import Task, TaskInput, TaskOutput, TaskStatus
+from app.models.task import Task, TaskOutput, TaskStatus
 from app.scheduler.gpu_manager import EventBus, GPUManager, TaskQueue
 from app.workers.mock_workers import run_mock_pipeline
 
 log = logging.getLogger("scheduler")
+
+TERMINAL_STATUSES = {TaskStatus.SUCCEEDED.value, TaskStatus.FAILED.value, TaskStatus.CANCELED.value}
 
 
 class Scheduler:
@@ -31,16 +38,33 @@ class Scheduler:
 
     # ---------- 对外接口（API 层调用） ----------
 
-    async def submit(self, task: Task, priority: int) -> None:
+    async def submit(self, db: Session, task: Task, priority: int) -> None:
+        """入队并持久化 QUEUED 状态（调用方持有 task 所属会话）。"""
         task.status = TaskStatus.QUEUED.value
-        await self.queue.push(task.id, priority)
+        task.stage = "排队中"
+        db.commit()
+        await self.queue.push(task.id, priority, task.resource_profile)
         await self._emit(task.id, TaskStatus.QUEUED, "排队中", 0)
 
     async def cancel(self, task_id: str) -> bool:
-        """取消排队任务，或中断运行中任务的当前阶段之后继续。"""
+        """取消：排队任务立即落库 CANCELED；运行中任务在下一阶段边界中断。"""
         self._canceled.add(task_id)
         await self.queue.remove(task_id)
-        return True
+        if task_id in self._running:
+            return True  # 运行中：由 Worker 的 cancel_check 触发中断与落库
+        db = SessionLocal()
+        try:
+            task = db.get(Task, task_id)
+            if task is not None and task.status not in TERMINAL_STATUSES:
+                task.status = TaskStatus.CANCELED.value
+                task.stage = "已取消"
+                task.error_code = "USER_CANCEL"
+                db.commit()
+                await self._emit(task_id, TaskStatus.CANCELED, "已取消", task.progress)
+                return True
+        finally:
+            db.close()
+        return False
 
     def is_canceled(self, task_id: str) -> bool:
         return task_id in self._canceled
@@ -52,34 +76,42 @@ class Scheduler:
         self._stopping = True
         if self._loop_task:
             self._loop_task.cancel()
+        for t in list(self._running.values()):
+            t.cancel()
+
+    def snapshot(self) -> dict:
+        """调度器运行视图（监控页使用）。"""
+        return {"queued": len(self.queue), "running": len(self._running)}
 
     # ---------- 内部逻辑 ----------
 
     async def _dispatch_loop(self) -> None:
-        """单进程调度循环：顺序取队首任务，资源不足时等待并让队列重试。"""
         while not self._stopping:
             try:
-                task_id = await self.queue.pop()
-                asyncio.create_task(self._run_task(task_id))
-                await asyncio.sleep(0.05)  # 让 Worker 先占卡，避免同帧重复分配
+                task_id, profile = await self.queue.pop(predicate=self._runnable_now)
+                fut = asyncio.create_task(self._run_task(task_id, profile))
+                self._running[task_id] = fut
+                fut.add_done_callback(lambda _t, tid=task_id: self._running.pop(tid, None))
             except asyncio.CancelledError:
                 break
             except Exception:
                 log.exception("dispatch error")
                 await asyncio.sleep(1)
 
-    async def _run_task(self, task_id: str) -> None:
+    async def _runnable_now(self, task_id: str, profile: str) -> bool:
+        return self.gpu.can_acquire(profile)
+
+    async def _run_task(self, task_id: str, profile: str) -> None:
         db = SessionLocal()
         try:
             task = db.get(Task, task_id)
-            if task is None or task.status in (TaskStatus.CANCELED.value, TaskStatus.SUCCEEDED.value):
+            if task is None or task.status in TERMINAL_STATUSES:
                 return
-            gpu_ids = await self.gpu.acquire(task.resource_profile)
+            gpu_ids = await self.gpu.acquire(profile)
             if gpu_ids is None:
-                # 资源不足：放回队列，稍后重试（XL 任务等待整机空闲）
-                await asyncio.sleep(0.5)
+                # predicate 与 acquire 之间的竞态兜底：放回队列稍后重试
                 if not self.is_canceled(task_id):
-                    await self.queue.push(task_id, task.priority)
+                    await self.queue.push(task_id, task.priority, profile)
                 return
 
             task.gpu_ids = ",".join(map(str, gpu_ids))
@@ -91,18 +123,23 @@ class Scheduler:
             try:
                 output = await self._execute(db, task, gpu_ids)
             except InterruptedError:
-                self._finish_failed(db, task, "CANCELED", "用户取消")
+                self._finish(db, task, TaskStatus.CANCELED, "USER_CANCEL", "用户取消")
                 await self._emit(task_id, TaskStatus.CANCELED, "已取消", task.progress, task.gpu_ids)
                 return
+            except asyncio.CancelledError:
+                self._finish(db, task, TaskStatus.CANCELED, "SHUTDOWN", "调度器停止")
+                raise
             except Exception as e:  # noqa: BLE001
                 log.exception("task %s failed", task_id)
-                self._finish_failed(db, task, "EXEC_ERROR", str(e))
+                self._finish(db, task, TaskStatus.FAILED, "EXEC_ERROR", str(e))
                 await self._emit(task_id, TaskStatus.FAILED, "执行失败", task.progress, task.gpu_ids,
                                  error_code="EXEC_ERROR")
                 return
             finally:
                 await self.gpu.release(gpu_ids)
                 self._canceled.discard(task_id)
+                # 资源释放后唤醒调度循环：让等待整机空闲的 XL 等任务立即重试分配
+                await self.queue.notify()
 
             self._finish_succeeded(db, task, output)
             await self._emit(task_id, TaskStatus.SUCCEEDED, "生成完成", 100, task.gpu_ids)
@@ -149,8 +186,8 @@ class Scheduler:
         ))
         db.commit()
 
-    def _finish_failed(self, db: Session, task: Task, code: str, message: str) -> None:
-        task.status = TaskStatus.FAILED.value if code != "CANCELED" else TaskStatus.CANCELED.value
+    def _finish(self, db: Session, task: Task, status: TaskStatus, code: str, message: str) -> None:
+        task.status = status.value
         task.error_code = code
         task.error_message = message[:512]
         db.commit()
@@ -165,6 +202,20 @@ class Scheduler:
             "gpu_ids": gpu_ids,
             "error_code": error_code,
         })
+
+    def current_state(self, task_id: str) -> dict | None:
+        """读取任务当前状态（供 SSE 订阅时补发快照，避免重连后事件断档）。"""
+        db = SessionLocal()
+        try:
+            t = db.get(Task, task_id)
+            if t is None:
+                return None
+            return {
+                "task_id": t.id, "status": t.status, "stage": t.stage or "",
+                "progress": t.progress, "gpu_ids": t.gpu_ids, "error_code": t.error_code,
+            }
+        finally:
+            db.close()
 
 
 # 进程内单例（uvicorn 单 worker 模式下可用；多 worker/多机部署切换 Redis 队列）

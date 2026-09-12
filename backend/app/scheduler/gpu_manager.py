@@ -5,7 +5,6 @@ GPU 资源池：8×V100 按 S(1)/M(2)/L(4)/XL(8) 档位做 gang scheduling。
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 
 from app.models.task import ResourceProfile
 
@@ -26,15 +25,21 @@ class GPUManager:
     def size_of(self, profile: str) -> int:
         return PROFILE_SIZES.get(profile, 1)
 
+    def can_acquire(self, profile: str) -> bool:
+        """无锁快速判断（用于调度 predicate）；真实分配仍以 acquire 为准。"""
+        need = self.size_of(profile)
+        if need > len(self.free):
+            return False
+        if profile == ResourceProfile.XL.value and len(self.free) != self.total:
+            return False
+        return True
+
     async def acquire(self, profile: str) -> list[int] | None:
         """获取整组 GPU；失败返回 None（任务继续留在队列）。XL 仅在整机空闲时分配。"""
         async with self._lock:
-            need = self.size_of(profile)
-            if need > len(self.free):
+            if not self.can_acquire(profile):
                 return None
-            if profile == ResourceProfile.XL.value and len(self.free) != self.total:
-                return None
-            gpu_ids = sorted(self.free)[:need]
+            gpu_ids = sorted(self.free)[: self.size_of(profile)]
             self.free -= set(gpu_ids)
             return gpu_ids
 
@@ -68,20 +73,25 @@ class EventBus:
 
 
 class TaskQueue:
-    """优先级队列。开发模式用进程内实现；生产模式切换 Redis（见 services/queue_backend）。"""
+    """
+    优先级队列（priority 小者先）。
+    条目携带 resource_profile，调度循环用 predicate 跳过资源不足的队头任务，
+    避免“高优先级 8 卡任务卡住后面所有 1 卡小任务”的队头阻塞。
+    """
 
     def __init__(self):
-        self._items: list[tuple[int, float, str]] = []
+        self._items: list[tuple[int, float, str, str]] = []  # (priority, seq, task_id, profile)
         self._seq = 0.0
         self._cond = asyncio.Condition()
 
-    async def push(self, task_id: str, priority: int) -> None:
+    async def push(self, task_id: str, priority: int, profile: str) -> None:
         async with self._cond:
             self._seq += 1
-            self._items.append((priority, self._seq, task_id))
+            self._items.append((priority, self._seq, task_id, profile))
             self._cond.notify_all()
 
-    async def pop(self, predicate: Callable[[str], Awaitable[bool]] | None = None) -> str:
+    async def pop(self, predicate=None) -> tuple[str, str]:
+        """返回 (task_id, profile)。predicate(task_id, profile) 过滤当前资源不可运行的任务。"""
         async with self._cond:
             while True:
                 if not self._items:
@@ -89,13 +99,22 @@ class TaskQueue:
                     continue
                 self._items.sort(key=lambda x: (x[0], x[1]))
                 if predicate is None:
-                    _, _, task_id = self._items.pop(0)
-                    return task_id
-                for i, (_, _, task_id) in enumerate(self._items):
-                    if await predicate(task_id):
-                        return self._items.pop(i)[2]
+                    _, _, task_id, profile = self._items.pop(0)
+                    return task_id, profile
+                for i, (_, _, task_id, profile) in enumerate(self._items):
+                    if await predicate(task_id, profile):
+                        _, _, tid, prof = self._items.pop(i)
+                        return tid, prof
                 await self._cond.wait()
 
     async def remove(self, task_id: str) -> None:
         async with self._cond:
             self._items = [it for it in self._items if it[2] != task_id]
+
+    async def notify(self) -> None:
+        """资源状态变化（任务完成释放 GPU）时唤醒调度循环，重试 predicate。"""
+        async with self._cond:
+            self._cond.notify_all()
+
+    def __len__(self) -> int:
+        return len(self._items)

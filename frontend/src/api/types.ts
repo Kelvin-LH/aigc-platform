@@ -59,7 +59,7 @@ export const TASK_TYPE_LABELS: Record<string, string> = {
   'image-to-image': '图生图',
   'image-to-video': '图生视频',
   'text-to-video': '文生视频',
-  'text-to-image': '文生图（扩展）'
+  'text-to-image': '文生图'
 }
 
 export const STATUS_LABELS: Record<string, string> = {

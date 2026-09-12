@@ -27,18 +27,27 @@ HIGH_VIDEO_PROFILE = "XL"
 
 ALLOWED_IMAGE_MIME = {"image/png", "image/jpeg", "image/webp", "image/bmp"}
 
+TASK_LABELS = {
+    TaskType.IMAGE_TO_IMAGE.value: "图生图",
+    TaskType.IMAGE_TO_VIDEO.value: "图生视频",
+}
+
 
 def validate_task_spec(db: Session, spec) -> None:
-    if not spec.prompt.strip() and spec.task_type != TaskType.IMAGE_TO_IMAGE:
+    needs_image = spec.task_type in (TaskType.IMAGE_TO_IMAGE, TaskType.IMAGE_TO_VIDEO)
+    if not spec.prompt.strip() and not needs_image:
         raise HTTPException(422, "prompt 不能为空")
-    if spec.task_type == TaskType.IMAGE_TO_IMAGE and not spec.input_asset_ids:
-        raise HTTPException(422, "图生图至少需要一张参考图")
-    for asset_id in spec.input_asset_ids:
-        asset = db.get(Asset, asset_id)
-        if asset is None:
-            raise HTTPException(422, f"素材不存在: {asset_id}")
-        if asset.type == "image" and asset.mime not in ALLOWED_IMAGE_MIME:
-            raise HTTPException(422, f"不支持的图片格式: {asset.mime}")
+    if needs_image:
+        if not spec.input_asset_ids:
+            raise HTTPException(422, f"{TASK_LABELS.get(spec.task_type.value, spec.task_type.value)}至少需要一张参考图")
+        for asset_id in spec.input_asset_ids:
+            asset = db.get(Asset, asset_id)
+            if asset is None:
+                raise HTTPException(422, f"素材不存在: {asset_id}")
+            if asset.type != "image":
+                raise HTTPException(422, f"素材 {asset_id} 不是图片（type={asset.type}）")
+            if asset.mime not in ALLOWED_IMAGE_MIME:
+                raise HTTPException(422, f"不支持的图片格式: {asset.mime}")
 
 
 def resolve_model(db: Session, task_type: str, quality_tier: str) -> ModelInfo:
