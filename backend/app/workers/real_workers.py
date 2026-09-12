@@ -154,7 +154,17 @@ def _load_sdxl(gpu_id: int):
 async def run_sdxl(db, task, ti, on_stage, cancel_check, gpu_ids) -> dict:
     import torch
 
-    gpu = gpu_ids[0]
+    # 从分配到的候选卡中选显存最空闲的一张：GPU 管理器只跟踪任务占用，
+    # 不感知其他模型常驻显存（如 GPU0 上的 Qwen），按实际余量选卡避免 OOM
+    def _pick_gpu() -> int:
+        best, best_free = gpu_ids[0], -1
+        for g in gpu_ids:
+            free, _total = torch.cuda.mem_get_info(g)
+            if free > best_free:
+                best, best_free = g, free
+        return best
+
+    gpu = await asyncio.to_thread(_pick_gpu)
     started = time.perf_counter()
     await on_stage("加载模型", 15)
     key = ("sdxl", gpu)
@@ -170,23 +180,28 @@ async def run_sdxl(db, task, ti, on_stage, cancel_check, gpu_ids) -> dict:
     cfg = float(params.get("cfg", 5.0))
     width = int(params.get("width", 1024))
     height = int(params.get("height", 1024))
-    generator = torch.Generator(device=f"cuda:{gpu}")
-    generator.manual_seed(seed)
 
-    await on_stage("Prompt 编码", 35)
-    await on_stage("扩散采样", 55)
-
-    def _infer():
+    def _generate(w: int, h: int):
+        generator = torch.Generator(device=f"cuda:{gpu}")
+        generator.manual_seed(seed)
         return pipe(
             prompt=ti.prompt,
             negative_prompt=ti.negative_prompt or None,
             num_inference_steps=steps,
             guidance_scale=cfg,
-            width=width, height=height,
+            width=w, height=h,
             generator=generator,
         ).images[0]
 
-    image = await asyncio.to_thread(_infer)
+    await on_stage("Prompt 编码", 35)
+    await on_stage("扩散采样", 55)
+    try:
+        image = await asyncio.to_thread(_generate, width, height)
+    except torch.OutOfMemoryError:
+        # 显存不足自动降级到 768 再试一次
+        await on_stage("显存不足，降级 768 重试", 55)
+        torch.cuda.empty_cache()
+        image = await asyncio.to_thread(_generate, 768, 768)
     if cancel_check():
         raise InterruptedError("canceled")
     await on_stage("VAE 解码", 85)
@@ -199,5 +214,5 @@ async def run_sdxl(db, task, ti, on_stage, cancel_check, gpu_ids) -> dict:
         "seed": seed,
         "runtime_ms": int((time.perf_counter() - started) * 1000),
         "output_hint": f"/files/{fn.relative_to('results').as_posix()}",
-        "image_size": f"{width}x{height}",
+        "image_size": f"{image.width}x{image.height}",
     }
