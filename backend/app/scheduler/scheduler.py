@@ -17,7 +17,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
-from app.models.task import Task, TaskOutput, TaskStatus
+from app.models.task import Task, TaskInput, TaskOutput, TaskStatus
 from app.scheduler.gpu_manager import EventBus, GPUManager, TaskQueue
 from app.workers.mock_workers import run_mock_pipeline
 
