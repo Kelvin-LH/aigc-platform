@@ -141,9 +141,13 @@ def _load_sdxl(gpu_id: int):
         d, torch_dtype=torch.float16, use_safetensors=True, variant="fp16"
     )
     pipe.to(f"cuda:{gpu_id}")
-    # V100 16GB 显存优化
-    pipe.enable_attention_slicing()
-    pipe.enable_vae_slicing()
+    # V100 16GB 显存优化（兼容新旧 diffusers API）
+    if hasattr(pipe, "enable_attention_slicing"):
+        pipe.enable_attention_slicing()
+    if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
+        pipe.vae.enable_slicing()
+    if hasattr(pipe, "enable_vae_slicing"):
+        pipe.enable_vae_slicing()
     return pipe
 
 
