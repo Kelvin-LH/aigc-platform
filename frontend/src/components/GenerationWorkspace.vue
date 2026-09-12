@@ -26,35 +26,55 @@
 
     <!-- Prompt 输入 -->
     <el-form label-position="top">
-      <el-form-item :label="needImage ? '编辑指令 / 运动描述' : 'Prompt'">
+      <el-form-item>
+        <template #label>
+          <span>{{ needImage ? '编辑指令 / 运动描述' : 'Prompt（提示词）' }}</span>
+          <Tip text="用自然语言描述你想要的内容。生成文字时直接写需求；生成图片/视频时描述画面细节、风格和镜头，越具体效果越好" />
+        </template>
         <el-input v-model="prompt" type="textarea" :rows="3"
                   :placeholder="promptPlaceholder" />
       </el-form-item>
-      <el-form-item label="负面 Prompt（可选）">
-        <el-input v-model="negativePrompt" type="textarea" :rows="1" placeholder="不希望出现的元素" />
+      <el-form-item>
+        <template #label>
+          <span>负面 Prompt（可选）</span>
+          <Tip text="你不想在结果里出现的东西。例如填「模糊、变形、文字水印」，系统会尽量避免这些元素" />
+        </template>
+        <el-input v-model="negativePrompt" type="textarea" :rows="1" placeholder="例如：模糊、变形、水印" />
       </el-form-item>
 
       <el-row :gutter="12">
         <el-col :span="8">
-          <el-form-item label="质量模式">
+          <el-form-item>
+            <template #label>
+              <span>质量模式</span>
+              <Tip text="选择用哪一档模型：快速=小模型，几秒出结果；标准=效果与速度均衡；高质量=最强模型，效果最好但排队更久、耗时更长" />
+            </template>
             <el-select v-model="modelProfile">
-              <el-option label="快速（轻量档）" value="fast" />
-              <el-option label="标准" value="standard" />
-              <el-option label="高质量（大模型档）" value="high" />
+              <el-option label="快速（小模型，秒级响应）" value="fast" />
+              <el-option label="标准（均衡推荐）" value="standard" />
+              <el-option label="高质量（最强模型，耗时更长）" value="high" />
             </el-select>
           </el-form-item>
         </el-col>
         <el-col :span="8">
-          <el-form-item label="优先级">
+          <el-form-item>
+            <template #label>
+              <span>优先级</span>
+              <Tip text="多任务排队时谁先执行：数字越小越靠前。「最高」相当于插队；普通任务保持默认即可，避免挤占别人的大任务" />
+            </template>
             <el-select v-model="priority">
               <el-option v-for="p in [1, 3, 5, 7, 9]" :key="p" :value="p"
-                         :label="p === 1 ? '最高' : p === 9 ? '最低' : String(p)" />
+                         :label="p === 1 ? '最高（插队执行）' : p === 9 ? '最低（排最后）' : String(p)" />
             </el-select>
           </el-form-item>
         </el-col>
         <el-col :span="8">
-          <el-form-item label="Seed（可选）">
-            <el-input-number v-model="seed" :min="0" style="width: 100%" placeholder="随机" />
+          <el-form-item>
+            <template #label>
+              <span>Seed（随机种子，可选）</span>
+              <Tip text="生成的「起点随机数」。留空=每次都随机出新样子；填固定数字并搭配相同参数，可以复现同样/相近的结果，方便在此基础上微调" />
+            </template>
+            <el-input-number v-model="seed" :min="0" style="width: 100%" placeholder="留空随机" />
           </el-form-item>
         </el-col>
       </el-row>
@@ -62,39 +82,85 @@
       <!-- 视频任务：时长/分辨率/FPS -->
       <el-row v-if="isVideo" :gutter="12">
         <el-col :span="8">
-          <el-form-item label="视频时长">
+          <el-form-item>
+            <template #label>
+              <span>视频时长</span>
+              <Tip text="生成的视频播放长度。时间越长，生成耗时和显存占用越多；建议先用 3–5 秒试效果" />
+            </template>
             <el-select v-model="vDuration">
-              <el-option label="3 秒" value="3" /><el-option label="5 秒" value="5" />
-              <el-option label="8 秒" value="8" /><el-option label="10 秒" value="10" />
+              <el-option label="3 秒（快速试效果）" value="3" /><el-option label="5 秒（推荐）" value="5" />
+              <el-option label="8 秒" value="8" /><el-option label="10 秒（最慢）" value="10" />
             </el-select>
           </el-form-item>
         </el-col>
         <el-col :span="8">
-          <el-form-item label="分辨率">
+          <el-form-item>
+            <template #label>
+              <span>分辨率</span>
+              <Tip text="画面清晰度：480P 出片最快，适合预览挑选；720P 日常够用；1080P 细节最丰富，但生成时间明显变长" />
+            </template>
             <el-select v-model="vRes">
-              <el-option label="480P（854×480，快速）" value="854x480" />
-              <el-option label="720P（1280×720，标准）" value="1280x720" />
-              <el-option label="1080P（1920×1080，高质量）" value="1920x1080" />
+              <el-option label="480P（854×480，出片最快）" value="854x480" />
+              <el-option label="720P（1280×720，推荐）" value="1280x720" />
+              <el-option label="1080P（1920×1080，最清晰）" value="1920x1080" />
             </el-select>
           </el-form-item>
         </el-col>
         <el-col :span="8">
-          <el-form-item label="帧率 FPS">
+          <el-form-item>
+            <template #label>
+              <span>帧率 FPS</span>
+              <Tip text="每秒播放多少张画面。帧率越高动作越顺滑：8 帧像翻页动画（草稿），16 帧基本流畅，24 帧接近电影观感" />
+            </template>
             <el-select v-model="vFps">
-              <el-option label="8（草稿）" value="8" /><el-option label="16（标准）" value="16" />
-              <el-option label="24（流畅）" value="24" />
+              <el-option label="8（草稿预览）" value="8" /><el-option label="16（标准推荐）" value="16" />
+              <el-option label="24（电影级流畅）" value="24" />
             </el-select>
           </el-form-item>
         </el-col>
       </el-row>
 
       <el-collapse v-if="showAdvanced">
-        <el-collapse-item title="高级设置（采样步数 / CFG / 时长 / FPS）">
-          <el-row :gutter="12">
-            <el-col :span="6"><el-input v-model="params.steps" placeholder="采样步数" /></el-col>
-            <el-col :span="6"><el-input v-model="params.cfg" placeholder="CFG" /></el-col>
-            <el-col :span="6"><el-input v-model="params.duration" placeholder="时长(秒)" /></el-col>
-            <el-col :span="6"><el-input v-model="params.fps" placeholder="FPS" /></el-col>
+        <el-collapse-item title="高级设置（一般保持默认即可）">
+          <el-row v-if="isText" :gutter="12">
+            <el-col :span="12">
+              <el-form-item>
+                <template #label>
+                  <span>回答长度</span>
+                  <Tip text="最多生成多少字（token）。默认 512 字约一页内容，写长文可调大" />
+                </template>
+                <el-input v-model="pMaxTokens" placeholder="默认 512" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item>
+                <template #label>
+                  <span>语气随机度（temperature）</span>
+                  <Tip text="0=回答严谨固定，1=更有创意更发散。写文案建议 0.7 左右" />
+                </template>
+                <el-input v-model="pTemp" placeholder="默认 0.7" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row v-else :gutter="12">
+            <el-col :span="12">
+              <el-form-item>
+                <template #label>
+                  <span>采样步数</span>
+                  <Tip text="画面从模糊到清晰的「打磨次数」。步数越多细节越好但越慢，一般 20–30 步足够" />
+                </template>
+                <el-input v-model="pSteps" placeholder="默认 25" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item>
+                <template #label>
+                  <span>提示词服从度（CFG）</span>
+                  <Tip text="画面有多「听话」：太低会不按你的描述画，太高画面容易生硬。一般 5–8" />
+                </template>
+                <el-input v-model="pCfg" placeholder="默认 5" />
+              </el-form-item>
+            </el-col>
           </el-row>
         </el-collapse-item>
       </el-collapse>
@@ -149,6 +215,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, subscribeTaskEvents } from '../api/client'
+import Tip from './Tip.vue'
 import {
   STATUS_LABELS, STATUS_TYPES, TASK_TYPE_LABELS,
   type AssetOut, type TaskEvent, type TaskOut
@@ -164,9 +231,14 @@ const props = defineProps<{
 
 const showAdvanced = computed(() => ['image-to-video', 'text-to-video'].includes(props.taskType))
 const isVideo = computed(() => ['image-to-video', 'text-to-video'].includes(props.taskType))
+const isText = computed(() => props.taskType === 'text-to-text')
 const vDuration = ref('5')
 const vRes = ref('1280x720')
 const vFps = ref('16')
+const pSteps = ref('')
+const pCfg = ref('')
+const pMaxTokens = ref('')
+const pTemp = ref('')
 const stageFlow = computed(() =>
   props.taskType === 'text-to-text'
     ? ['排队', '分配 GPU', '加载模型', 'Prompt 编码', '文本生成', '写回历史']
@@ -180,7 +252,6 @@ const negativePrompt = ref('')
 const modelProfile = ref('standard')
 const priority = ref(5)
 const seed = ref<number | undefined>(undefined)
-const params = ref<Record<string, string>>({})
 const asset = ref<AssetOut | null>(null)
 const submitting = ref(false)
 const error = ref('')
@@ -231,12 +302,16 @@ async function submit() {
   if (!prompt.value.trim() && props.taskType !== 'image-to-image') { error.value = '请输入 Prompt'; return }
   submitting.value = true
   try {
-    const cleanParams = Object.fromEntries(Object.entries(params.value).filter(([, v]) => v !== ''))
+    const cleanParams: Record<string, unknown> = {}
     if (isVideo.value) {
       cleanParams.duration = vDuration.value
       cleanParams.resolution = vRes.value
       cleanParams.fps = vFps.value
     }
+    if (pSteps.value.trim()) cleanParams.steps = pSteps.value.trim()
+    if (pCfg.value.trim()) cleanParams.cfg = pCfg.value.trim()
+    if (pMaxTokens.value.trim()) cleanParams.max_tokens = pMaxTokens.value.trim()
+    if (pTemp.value.trim()) cleanParams.temperature = pTemp.value.trim()
     task.value = await api.submitTask(props.endpoint, {
       task_type: props.taskType,
       input_asset_ids: asset.value ? [asset.value.id] : [],

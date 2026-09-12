@@ -80,7 +80,7 @@ def _api_config(adapter: str) -> tuple[str, str, str]:
         return (
             os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
             os.environ.get("DEEPSEEK_API_KEY", ""),
-            os.environ.get("DEEPSEEK_API_MODEL", "deepseek-chat"),
+            os.environ.get("DEEPSEEK_API_MODEL", "deepseek-flash"),
         )
     return (
         os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1"),

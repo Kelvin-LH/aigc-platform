@@ -56,7 +56,7 @@ def seed(db) -> None:
         if not db.query(ModelInfo).filter(ModelInfo.name == "DeepSeek-Chat(API)").first():
             db.add(ModelInfo(
                 capability="text-to-text", name="DeepSeek-Chat(API)",
-                version=os.environ.get("DEEPSEEK_API_MODEL", "deepseek-chat"),
+                version=os.environ.get("DEEPSEEK_API_MODEL", "deepseek-flash"),
                 quality_tier="high", resource_profile="API", dtype="api",
                 min_gpus=0, peak_vram_gb=0, license="DeepSeek API", adapter="deepseek_api",
             ))
