@@ -21,7 +21,22 @@ from pathlib import Path
 
 log = logging.getLogger("worker")
 
-MODEL_ROOT = Path(os.environ.get("MODEL_ROOT", str(Path.home() / "models")))
+def _model_root() -> Path:
+    # 优先环境变量，其次 Settings（.env 中的 MODEL_ROOT），默认 ~/models
+    env = os.environ.get("MODEL_ROOT")
+    if env:
+        return Path(env)
+    try:
+        from app.core.config import get_settings
+        s = get_settings().MODEL_ROOT
+        if s:
+            return Path(s)
+    except Exception:
+        pass
+    return Path.home() / "models"
+
+
+MODEL_ROOT = _model_root()
 MODEL_DIRS = {
     "qwen": MODEL_ROOT / "Qwen2.5-3B-Instruct",
     "sdxl": MODEL_ROOT / "stable-diffusion-xl-base-1.0",

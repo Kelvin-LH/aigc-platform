@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # 8x V100 GPU 资源池
     TOTAL_GPUS: int = 8
 
+    # 真实模型权重根目录（real_workers 使用）
+    MODEL_ROOT: str = ""
+
     # 上传限制
     MAX_UPLOAD_MB: int = 200
 
